@@ -14,9 +14,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
 
 # ── System deps ──────────────────────────────────────────────────────────────
+# python3.12 is not in Ubuntu 22.04 default repos — use 3.11 (available natively)
 RUN apt-get update -y && apt-get install -y \
-    python3.12 python3.12-dev python3-pip \
+    python3.11 python3.11-dev python3-pip \
     git curl wget build-essential \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python3 \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
 RUN ldconfig /usr/local/cuda-12.4/compat/ 2>/dev/null || true
