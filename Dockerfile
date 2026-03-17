@@ -8,7 +8,9 @@ FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
-    HF_HOME=/workspace/hf_cache \
+    HF_HOME=/app/model_cache \
+    TRANSFORMERS_CACHE=/app/model_cache \
+    SENTENCE_TRANSFORMERS_HOME=/app/model_cache \
     PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
 
 # RunPod official pattern: just python3-pip, use Ubuntu 22.04's built-in Python 3.10
