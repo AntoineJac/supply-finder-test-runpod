@@ -64,8 +64,8 @@ SERVED_MODEL_NAME = os.getenv("SERVED_MODEL_NAME", "glm-4.7-flash")
 EMBED_MODEL_NAME  = os.getenv("EMBED_MODEL_NAME",  "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
 RERANK_MODEL_NAME = os.getenv("RERANK_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L4-v2")
 TP_SIZE           = int(os.getenv("TENSOR_PARALLEL_SIZE", "1"))
-GPU_MEM_UTIL      = float(os.getenv("GPU_MEMORY_UTILIZATION", "0.72"))  # leaves room for aux models
-MAX_MODEL_LEN     = int(os.getenv("MAX_MODEL_LEN", "32768"))
+GPU_MEM_UTIL      = float(os.getenv("GPU_MEMORY_UTILIZATION", "0.80"))  # leaves room for aux models
+MAX_MODEL_LEN     = int(os.getenv("MAX_MODEL_LEN", "16384"))
 PORT              = int(os.getenv("PORT", 80))
 DEVICE            = "cuda" if torch.cuda.is_available() else "cpu"
 
