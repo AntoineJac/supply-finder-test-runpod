@@ -1,8 +1,8 @@
-# GLM-4.7-Flash RunPod Load Balancing Worker
-# Follows: https://docs.runpod.io/serverless/load-balancing/vllm-worker
+# NLP Inference Worker — Embeddings + Reranker
+# Follows: https://docs.runpod.io/serverless/load-balancing/build-a-worker
 #
-# Build: docker build --platform linux/amd64 -t yourname/glm47-worker:v2.1 .
-# Push:  docker push yourname/glm47-worker:v2.1
+# Build: docker build --platform linux/amd64 -t yourname/nlp-worker:v1.0 .
+# Push:  docker push yourname/nlp-worker:v1.0
 
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 
@@ -24,22 +24,7 @@ COPY requirements.txt /requirements.txt
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r /requirements.txt
 
-# ── vLLM nightly — GLM-4.7-Flash only works on nightly, not stable release ──
-# Per zai-org HF model card: must use pypi.org as primary index-url
-RUN pip install --no-cache-dir \
-    --upgrade \
-    --pre \
-    vllm \
-    --index-url https://pypi.org/simple \
-    --extra-index-url https://wheels.vllm.ai/nightly
-
-# ── Transformers from source (required for GLM-4.7-Flash) ───────────────────
-RUN pip install --no-cache-dir --upgrade --force-reinstall \
-    "git+https://github.com/huggingface/transformers.git"
-
-RUN pip install --no-cache-dir numba accelerate
-
-# ── Pre-download aux models at build time (zero cold-start for embeddings) ───
+# ── Pre-download models at build time (zero cold-start) ─────────────────────
 RUN python3 -c "\
 from sentence_transformers import SentenceTransformer, CrossEncoder; \
 SentenceTransformer('sentence-transformers/paraphrase-multilingual-mpnet-base-v2'); \
