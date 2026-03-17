@@ -1,20 +1,20 @@
 # GLM-4.7-Flash RunPod Load Balancing Worker
 # Follows: https://docs.runpod.io/serverless/load-balancing/vllm-worker
 #
-# Build: docker build --platform linux/amd64 -t yourname/glm47-worker:v2.0 .
-# Push:  docker push yourname/glm47-worker:v2.0
+# Build: docker build --platform linux/amd64 -t yourname/glm47-worker:v2.1 .
+# Push:  docker push yourname/glm47-worker:v2.1
 
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     HF_HOME=/workspace/hf_cache \
-    # FIX: Required by Unsloth vLLM docs to prevent CUDA allocator issues
     PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
 
-RUN apt-get update -y && apt-get install -y \
-    python3.12 python3.12-dev python3-pip \
-    git curl wget build-essential \
+# RunPod official pattern: just python3-pip, use Ubuntu 22.04's built-in Python 3.10
+# No PPA, no deadsnakes, no manual symlinks — same as docs.runpod.io/serverless/load-balancing/vllm-worker
+RUN apt-get update -y \
+    && apt-get install -y python3-pip git curl wget build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 RUN ldconfig /usr/local/cuda-12.4/compat/ 2>/dev/null || true
@@ -51,7 +51,6 @@ COPY src /src
 ENV PYTHONPATH="/:/src"
 WORKDIR /src
 
-# RunPod load balancer uses PORT env var (default 80)
 EXPOSE 80
 
 CMD ["python3", "handler.py"]
