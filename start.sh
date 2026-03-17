@@ -5,11 +5,14 @@
 set -euo pipefail
 
 # ── Config (override via RunPod env vars) ─────────────────────────────────────
-MODEL_PATH="${GLM_MODEL_PATH:-zai-org/GLM-4.7-Flash}"
+# Use pre-quantized FP8 model by default — fits on 24GB (L4, A5000, 3090)
+# Switch to zai-org/GLM-4.7-Flash if you have 40GB+ (A100)
+MODEL_PATH="${GLM_MODEL_PATH:-unsloth/GLM-4.7-Flash-FP8-Dynamic}"
 SGLANG_PORT="${SGLANG_PORT:-30000}"
 API_PORT="${API_PORT:-8000}"
-TP_SIZE="${TENSOR_PARALLEL_SIZE:-1}"          # set to GPU count
-MEM_FRACTION="${MEM_FRACTION_STATIC:-0.82}"
+TP_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
+MEM_FRACTION="${MEM_FRACTION_STATIC:-0.88}"   # 0.88 on 24GB, lower to 0.82 on 40GB
+MAX_TOKENS="${MAX_TOTAL_TOKENS:-32768}"        # cap context to save KV cache VRAM
 WORKERS="${UVICORN_WORKERS:-2}"
 
 # HuggingFace cache — RunPod persists /workspace between runs
@@ -19,10 +22,12 @@ mkdir -p "${HF_HOME}"
 
 echo "============================================================"
 echo "  NLP Inference Service"
-echo "  GLM model : ${MODEL_PATH}"
-echo "  SGLang    : port ${SGLANG_PORT}  TP=${TP_SIZE}"
-echo "  FastAPI   : port ${API_PORT}  workers=${WORKERS}"
-echo "  HF cache  : ${HF_HOME}"
+echo "  GLM model   : ${MODEL_PATH}"
+echo "  SGLang      : port ${SGLANG_PORT}  TP=${TP_SIZE}"
+echo "  FastAPI     : port ${API_PORT}  workers=${WORKERS}"
+echo "  Max tokens  : ${MAX_TOKENS}"
+echo "  Mem fraction: ${MEM_FRACTION}"
+echo "  HF cache    : ${HF_HOME}"
 echo "============================================================"
 
 # ── 1. Start SGLang ───────────────────────────────────────────────────────────
@@ -31,7 +36,9 @@ python3 -m sglang.launch_server \
   --host 0.0.0.0 \
   --port "${SGLANG_PORT}" \
   --tp-size "${TP_SIZE}" \
+  --dtype bfloat16 \
   --mem-fraction-static "${MEM_FRACTION}" \
+  --max-total-tokens "${MAX_TOKENS}" \
   --reasoning-parser glm45 \
   --tool-call-parser glm47 \
   --enable-auto-tool-choice \
@@ -41,7 +48,6 @@ python3 -m sglang.launch_server \
   --speculative-num-draft-tokens 4 \
   --served-model-name glm-4.7-flash \
   --trust-remote-code \
-  --dtype bfloat16 \
   &
 
 SGLANG_PID=$!
