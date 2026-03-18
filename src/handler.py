@@ -48,12 +48,11 @@ EMBED_MODEL  = os.getenv("EMBED_MODEL_NAME",  "sentence-transformers/paraphrase-
 RERANK_MODEL = os.getenv("RERANK_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L4-v2")
 PORT         = int(os.getenv("PORT", 80))
 
-# Ensure both default models are loaded by the engine array (can be overridden via MODEL_NAMES)
 if not os.environ.get("MODEL_NAMES"):
     os.environ["MODEL_NAMES"] = f"{EMBED_MODEL};{RERANK_MODEL}"
 
 # ---------------------------------------------------------------------------
-# Service singleton — fail fast so the container exits cleanly on bad config
+# Service singleton — fail fast on bad config
 # ---------------------------------------------------------------------------
 try:
     embedding_service = EmbeddingService()
@@ -95,8 +94,26 @@ app = FastAPI(
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _check_models():
+    if not models_ready:
+        request_stats["errors"] += 1
+        raise HTTPException(status_code=503, detail="Models not ready — check /ping")
+
+
+def _model_not_found(model_id: str) -> HTTPException:
+    """infinity-emb raises IndexError (not KeyError) for unknown model names."""
+    available = embedding_service.list_models()
+    return HTTPException(
+        status_code=400,
+        detail=f"Model '{model_id}' not loaded. Available: {available}",
+    )
+
+
+# ---------------------------------------------------------------------------
 # /ping — REQUIRED by RunPod load balancer
-# 200 = healthy  |  204 = still initialising
+# 200 = healthy  |  503 = still initialising
 # ---------------------------------------------------------------------------
 @app.get("/ping")
 async def health_check():
@@ -147,30 +164,26 @@ async def stats():
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-def _check_models():
-    if not models_ready:
-        request_stats["errors"] += 1
-        raise HTTPException(status_code=503, detail="Models not ready — check /ping")
-
-
-# ---------------------------------------------------------------------------
 # POST /v1/embeddings
 # ---------------------------------------------------------------------------
 @app.post("/v1/embeddings", response_model=EmbeddingResponse)
 async def embeddings(req: EmbeddingRequest):
     _check_models()
     request_stats["embeddings"] += 1
-    texts     = [req.input] if isinstance(req.input, str) else req.input
-    model_id  = req.model or EMBED_MODEL
+
+    texts    = [req.input] if isinstance(req.input, str) else req.input
+    model_id = req.model or EMBED_MODEL
     if not texts:
         raise HTTPException(status_code=400, detail="input must not be empty")
 
     try:
         vecs, usage = await embedding_service.embed(model_id, texts)
-    except KeyError:
-        raise HTTPException(status_code=400, detail=f"Model '{model_id}' not loaded. Available: {embedding_service.list_models()}")
+    except (IndexError, KeyError):
+        raise _model_not_found(model_id)
+    except Exception as exc:
+        request_stats["errors"] += 1
+        logger.exception("embed failed")
+        raise HTTPException(status_code=500, detail=str(exc))
 
     return EmbeddingResponse(
         model=model_id,
@@ -186,14 +199,19 @@ async def embeddings(req: EmbeddingRequest):
 async def rerank(req: RerankRequest):
     _check_models()
     request_stats["rerank"] += 1
+
     model_id = req.model or RERANK_MODEL
     if not req.documents:
         raise HTTPException(status_code=400, detail="documents must not be empty")
 
     try:
         scores, usage = await embedding_service.rerank(model_id, req.query, req.documents)
-    except KeyError:
-        raise HTTPException(status_code=400, detail=f"Model '{model_id}' not loaded. Available: {embedding_service.list_models()}")
+    except (IndexError, KeyError):
+        raise _model_not_found(model_id)
+    except Exception as exc:
+        request_stats["errors"] += 1
+        logger.exception("rerank failed")
+        raise HTTPException(status_code=500, detail=str(exc))
 
     ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
     top_n  = req.top_n or len(ranked)

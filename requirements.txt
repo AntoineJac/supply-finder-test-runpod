@@ -1,11 +1,10 @@
 # Web server
-fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
-pydantic>=2.0.0
+fastapi>=0.115.0,<1.0.0
+uvicorn[standard]>=0.30.0,<0.33.0
+pydantic>=2.4.0,<3.0.0
 
-# HuggingFace
-huggingface-hub>=0.24.0
+# HuggingFace — pinned <1.0 in requirements-heavy.txt due to HfFolder removal.
+# Listed here for completeness; pip will use the already-installed 0.36.2.
+huggingface-hub==0.36.2
 python-dotenv>=1.0.0
 requests>=2.31.0
-
-# torch + infinity-emb → requirements-heavy.txt

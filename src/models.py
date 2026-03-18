@@ -40,5 +40,3 @@ class RerankResponse(BaseModel):
     model: str
     results: List[Dict[str, Any]]
     usage: Dict[str, int]
-
-
