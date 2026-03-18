@@ -221,7 +221,7 @@ async def rerank(req: RerankRequest):
         results=[
             {
                 "index":    s.index,
-                "score":    s.relevance_score,
+                "score":    float(s.relevance_score),
                 "document": s.document if req.return_documents else None,
             }
             for s in ranked[:top_n]
