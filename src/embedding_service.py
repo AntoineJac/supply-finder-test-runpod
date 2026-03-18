@@ -75,6 +75,7 @@ class EmbeddingService:
                 batch_size=bs,
                 engine=_DEFAULT_BACKEND,
                 dtype=dtype,
+                bettertransformer=False,  # optimum.bettertransformer removed in optimum>=1.23
                 model_warmup=False,
                 lengths_via_tokenize=True,
             )
