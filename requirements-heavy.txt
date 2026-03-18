@@ -5,5 +5,6 @@
 # Use the STABLE cu124 index (not /test/) — the test index is unreliable.
 --extra-index-url https://download.pytorch.org/whl/cu124
 torch==2.6.0+cu124
-infinity-emb[all]==0.0.76
+infinity-emb[all]
 optimum<1.23.0
+
