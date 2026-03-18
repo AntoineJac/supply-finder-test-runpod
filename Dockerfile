@@ -3,24 +3,12 @@
 #
 # Build: docker build --platform linux/amd64 -t yourname/nlp-worker:v1.0 .
 # Push:  docker push yourname/nlp-worker:v1.0
+#
+# Models are NOT baked into the image. On first cold start they download to the
+# RunPod network volume (/runpod-volume) and are cached there for all future starts.
 
 # ============================
-# Stage 1: Model downloader
-# ============================
-# snapshot_download stores models in standard HF cache format,
-# which infinity-emb (and transformers) reads natively — no blob overhead tricks needed.
-FROM python:3.11-slim AS model-downloader
-
-ENV HF_HOME=/app/.cache/huggingface
-
-RUN pip install --no-cache-dir huggingface-hub
-
-RUN mkdir -p /app/.cache/huggingface && \
-    python -c "from huggingface_hub import snapshot_download; snapshot_download('sentence-transformers/paraphrase-multilingual-mpnet-base-v2', ignore_patterns=['*.msgpack','*.h5','flax_model*','tf_model*','rust_model*'])" && \
-    python -c "from huggingface_hub import snapshot_download; snapshot_download('cross-encoder/ms-marco-MiniLM-L4-v2', ignore_patterns=['*.msgpack','*.h5','flax_model*','tf_model*','rust_model*'])"
-
-# ============================
-# Stage 2: Builder
+# Stage 1: Builder
 # ============================
 FROM python:3.11-slim AS builder
 
@@ -45,7 +33,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install -r requirements.txt
 
 # ============================
-# Stage 3: Runtime
+# Stage 2: Runtime
 # ============================
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
@@ -63,13 +51,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV PYTHONUNBUFFERED=1 \
     VIRTUAL_ENV=/opt/venv \
     PATH="/opt/venv/bin:$PATH" \
-    HF_HOME=/app/.cache/huggingface
+    HF_HOME=/runpod-volume
 
 # Copy virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
-
-# Copy pre-downloaded models (HF cache format — infinity-emb finds them by model ID)
-COPY --from=model-downloader /app/.cache/huggingface /app/.cache/huggingface
 
 # App code
 COPY src /src
@@ -78,4 +63,4 @@ WORKDIR /src
 
 EXPOSE 80
 
-CMD ["python", "handler.py"]
+CMD ["/opt/venv/bin/python", "handler.py"]
