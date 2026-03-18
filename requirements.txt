@@ -5,3 +5,6 @@ pydantic>=2.0.0
 
 # HuggingFace
 huggingface-hub>=0.24.0
+python-dotenv>=1.0.0
+
+# torch + infinity-emb → requirements-heavy.txt

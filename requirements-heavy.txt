@@ -1,6 +1,8 @@
 # Heavy deps — installed first so this layer is only rebuilt when versions change.
 # The pip wheel cache is mounted at build time (--mount=type=cache) so torch
 # (~800 MB) is not re-downloaded on every build.
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.6.0+cpu
-sentence-transformers==2.7.0
+#
+# Use the STABLE cu124 index (not /test/) — the test index is unreliable.
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0+cu124
+infinity-emb[optimum]

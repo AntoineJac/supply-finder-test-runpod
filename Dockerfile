@@ -1,4 +1,4 @@
-# NLP Inference Worker — Embeddings + Reranker (CPU)
+# NLP Inference Worker — Embeddings + Reranker (GPU/CUDA)
 # Follows: https://docs.runpod.io/serverless/load-balancing/build-a-worker
 #
 # Build: docker build --platform linux/amd64 -t yourname/nlp-worker:v1.0 .
@@ -7,14 +7,17 @@
 # ============================
 # Stage 1: Model downloader
 # ============================
-# Uses .save() so only inference files land in the image — no HF blob cache overhead.
+# snapshot_download stores models in standard HF cache format,
+# which infinity-emb (and transformers) reads natively — no blob overhead tricks needed.
 FROM python:3.11-slim AS model-downloader
 
-RUN pip install --no-cache-dir sentence-transformers==2.7.0
+ENV HF_HOME=/app/.cache/huggingface
 
-RUN mkdir -p /app/.cache/sentence_transformers && \
-    python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/paraphrase-multilingual-mpnet-base-v2').save('/app/.cache/sentence_transformers/paraphrase-multilingual-mpnet-base-v2')" && \
-    python -c "from sentence_transformers.cross_encoder import CrossEncoder; m = CrossEncoder('cross-encoder/ms-marco-MiniLM-L4-v2'); m.save('/app/.cache/sentence_transformers/ms-marco-MiniLM-L4-v2')"
+RUN pip install --no-cache-dir huggingface-hub
+
+RUN mkdir -p /app/.cache/huggingface && \
+    python -c "from huggingface_hub import snapshot_download; snapshot_download('sentence-transformers/paraphrase-multilingual-mpnet-base-v2', ignore_patterns=['*.msgpack','*.h5','flax_model*','tf_model*','rust_model*'])" && \
+    python -c "from huggingface_hub import snapshot_download; snapshot_download('cross-encoder/ms-marco-MiniLM-L4-v2', ignore_patterns=['*.msgpack','*.h5','flax_model*','tf_model*','rust_model*'])"
 
 # ============================
 # Stage 2: Builder
@@ -23,41 +26,50 @@ FROM python:3.11-slim AS builder
 
 ENV PYTHONUNBUFFERED=1
 
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+# uv is significantly faster than pip for dependency resolution + install
+RUN pip install --no-cache-dir uv
 
-RUN pip install --upgrade pip
+RUN python -m venv /opt/venv
+ENV VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
 
 # Heavy deps first (torch ~800 MB) — layer only rebuilt when versions change.
-# --mount=type=cache persists the pip wheel cache on the build host across runs.
+# --mount=type=cache keeps the uv wheel cache on the build host across runs.
 COPY requirements-heavy.txt .
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r requirements-heavy.txt
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install -r requirements-heavy.txt
 
-# Light deps — fast to reinstall; torch layer stays cached above.
+# Light deps — fast to reinstall; torch/infinity-emb layer stays cached above.
 COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install -r requirements.txt
 
 # ============================
 # Stage 3: Runtime
 # ============================
-FROM python:3.11-slim
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+
+# Install Python 3.11 + symlink so `python` works
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3-pip \
+    git \
+    wget \
+    curl \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python \
+    && ln -sf /usr/bin/pip3 /usr/bin/pip \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1 \
+    VIRTUAL_ENV=/opt/venv \
     PATH="/opt/venv/bin:$PATH" \
-    SENTENCE_TRANSFORMERS_HOME=/app/.cache/sentence_transformers \
-    HF_HOME=/app/.cache/sentence_transformers
-
-RUN apt-get update -y \
-    && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
+    HF_HOME=/app/.cache/huggingface
 
 # Copy virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
 
-# Copy pre-saved models (clean flat directories, no blob cache)
-COPY --from=model-downloader /app/.cache/sentence_transformers /app/.cache/sentence_transformers
+# Copy pre-downloaded models (HF cache format — infinity-emb finds them by model ID)
+COPY --from=model-downloader /app/.cache/huggingface /app/.cache/huggingface
 
 # App code
 COPY src /src
@@ -66,4 +78,4 @@ WORKDIR /src
 
 EXPOSE 80
 
-CMD ["python3", "handler.py"]
+CMD ["python", "handler.py"]
