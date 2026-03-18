@@ -7,37 +7,9 @@
 # Models are NOT baked into the image. On first cold start they download to the
 # RunPod network volume (/runpod-volume) and are cached there for all future starts.
 
-# ============================
-# Stage 1: Builder
-# ============================
-FROM python:3.11-slim AS builder
-
-ENV PYTHONUNBUFFERED=1
-
-# uv is significantly faster than pip for dependency resolution + install
-RUN pip install --no-cache-dir uv
-
-RUN python -m venv /opt/venv
-ENV VIRTUAL_ENV=/opt/venv \
-    PATH="/opt/venv/bin:$PATH"
-
-# Heavy deps first (torch ~800 MB) — layer only rebuilt when versions change.
-# --mount=type=cache keeps the uv wheel cache on the build host across runs.
-COPY requirements-heavy.txt .
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install -r requirements-heavy.txt
-
-# Light deps — fast to reinstall; torch/infinity-emb layer stays cached above.
-COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install -r requirements.txt
-
-# ============================
-# Stage 2: Runtime
-# ============================
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
-# Install Python 3.11 + symlink so `python` works
+# Install Python 3.11 + uv + symlinks
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11 \
     python3-pip \
@@ -46,15 +18,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && ln -sf /usr/bin/python3.11 /usr/bin/python \
     && ln -sf /usr/bin/pip3 /usr/bin/pip \
+    && pip install --no-cache-dir uv \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1 \
-    VIRTUAL_ENV=/opt/venv \
-    PATH="/opt/venv/bin:$PATH" \
     HF_HOME=/runpod-volume
 
-# Copy virtual environment from builder
-COPY --from=builder /opt/venv /opt/venv
+# Heavy deps first (torch ~800 MB) — layer only rebuilt when versions change.
+COPY requirements-heavy.txt /requirements-heavy.txt
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system -r /requirements-heavy.txt
+
+# Light deps
+COPY requirements.txt /requirements.txt
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system -r /requirements.txt
 
 # App code
 COPY src /src
@@ -63,4 +41,4 @@ WORKDIR /src
 
 EXPOSE 80
 
-CMD ["/opt/venv/bin/python", "handler.py"]
+CMD ["python", "handler.py"]
