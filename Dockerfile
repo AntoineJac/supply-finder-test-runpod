@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     wget \
     curl \
+    libgl1 \
     && ln -sf /usr/bin/python3.11 /usr/bin/python \
     && ln -sf /usr/bin/pip3 /usr/bin/pip \
     && pip install --no-cache-dir uv \
@@ -41,4 +42,4 @@ WORKDIR /src
 
 EXPOSE 80
 
-CMD ["python", "handler.py"]
+CMD ["python", "-u", "handler.py"]
