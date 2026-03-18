@@ -213,17 +213,18 @@ async def rerank(req: RerankRequest):
         logger.exception("rerank failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
-    ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
+    # scores is list[RerankReturnType] — each has .relevance_score, .document, .index
+    ranked = sorted(scores, key=lambda s: s.relevance_score, reverse=True)
     top_n  = req.top_n or len(ranked)
     return RerankResponse(
         model=model_id,
         results=[
             {
-                "index":    idx,
-                "score":    float(s),
-                "document": req.documents[idx] if req.return_documents else None,
+                "index":    s.index,
+                "score":    s.relevance_score,
+                "document": s.document if req.return_documents else None,
             }
-            for idx, s in ranked[:top_n]
+            for s in ranked[:top_n]
         ],
         usage={"prompt_tokens": usage, "total_tokens": usage},
     )
