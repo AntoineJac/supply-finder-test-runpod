@@ -44,8 +44,10 @@ class EmbeddingServiceConfig:
         return [m for m in raw.split(";") if m]
 
     def _multi(self, name: str, default) -> list[str]:
-        raw  = os.getenv(name, f"{default};" * len(self.model_names))
-        vals = [v for v in raw.split(";") if v]
+        raw = os.getenv(name)
+        if raw is None:
+            return [str(default)] * len(self.model_names)
+        vals = [v.strip() for v in raw.split(";") if v.strip()]
         if len(vals) != len(self.model_names):
             raise ValueError(
                 f"Env var {name} must have the same number of elements as MODEL_NAMES"
@@ -63,8 +65,8 @@ class EmbeddingServiceConfig:
 
 class EmbeddingService:
     def __init__(self):
-        self.config    = EmbeddingServiceConfig()
-        self._semaphore = asyncio.Semaphore(1)
+        self.config     = EmbeddingServiceConfig()
+        self._semaphore: asyncio.Semaphore | None = None
         self.is_running = False
 
         engine_args = [
@@ -85,6 +87,8 @@ class EmbeddingService:
         self.engine_array = AsyncEngineArray.from_args(engine_args)
 
     async def start(self) -> None:
+        if self._semaphore is None:
+            self._semaphore = asyncio.Semaphore(1)
         async with self._semaphore:
             if not self.is_running:
                 logger.info(f"Starting engines for: {self.config.model_names}")
@@ -93,6 +97,8 @@ class EmbeddingService:
                 logger.info("✓ All engines started.")
 
     async def stop(self) -> None:
+        if self._semaphore is None:
+            return
         async with self._semaphore:
             if self.is_running:
                 await self.engine_array.astop()

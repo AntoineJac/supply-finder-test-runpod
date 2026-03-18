@@ -37,7 +37,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # App code
 COPY src /src
-ENV PYTHONPATH="/:/src"
+ENV PYTHONPATH="/src"
 WORKDIR /src
 
 EXPOSE 80

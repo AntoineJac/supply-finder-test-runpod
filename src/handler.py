@@ -104,7 +104,7 @@ async def health_check():
         return {"status": "healthy"}
     return JSONResponse(
         content={"status": "initializing"},
-        status_code=status.HTTP_204_NO_CONTENT,
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
     )
 
 
@@ -216,64 +216,3 @@ async def rerank(req: RerankRequest):
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=PORT)
-
-# POST /v1/embeddings
-# ---------------------------------------------------------------------------
-@app.post("/v1/embeddings", response_model=EmbeddingResponse)
-async def embeddings(req: EmbeddingRequest):
-    _check_models()
-    request_stats["embeddings"] += 1
-    texts = [req.input] if isinstance(req.input, str) else req.input
-    if not texts:
-        raise HTTPException(status_code=400, detail="input must not be empty")
-
-    loop = asyncio.get_event_loop()
-    vecs: np.ndarray = await loop.run_in_executor(
-        None,
-        lambda: embed_model.encode(
-            texts, batch_size=64, normalize_embeddings=True,
-            convert_to_numpy=True, show_progress_bar=False,
-        ),
-    )
-    total = sum(len(t.split()) for t in texts)
-    return EmbeddingResponse(
-        model=req.model or EMBED_MODEL_NAME,
-        data=[{"object": "embedding", "index": i, "embedding": v.tolist()} for i, v in enumerate(vecs)],
-        usage={"prompt_tokens": total, "total_tokens": total},
-    )
-
-
-# ---------------------------------------------------------------------------
-# POST /v1/rerank
-# ---------------------------------------------------------------------------
-@app.post("/v1/rerank", response_model=RerankResponse)
-async def rerank(req: RerankRequest):
-    _check_models()
-    request_stats["rerank"] += 1
-    if not req.documents:
-        raise HTTPException(status_code=400, detail="documents must not be empty")
-
-    pairs = [[req.query, doc] for doc in req.documents]
-    loop  = asyncio.get_event_loop()
-    scores: np.ndarray = await loop.run_in_executor(
-        None, lambda: rerank_model.predict(pairs, convert_to_numpy=True)
-    )
-
-    ranked = sorted(enumerate(scores.tolist()), key=lambda x: x[1], reverse=True)
-    top_n  = req.top_n or len(ranked)
-    return RerankResponse(
-        model=req.model or RERANK_MODEL_NAME,
-        results=[
-            {"index": idx, "score": float(s), "document": req.documents[idx] if req.return_documents else None}
-            for idx, s in ranked[:top_n]
-        ],
-        usage={"prompt_tokens": sum(len(d.split()) for d in req.documents)},
-    )
-
-
-# ---------------------------------------------------------------------------
-# Entrypoint
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    logger.info(f"Starting on 0.0.0.0:{PORT}")
-    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="info")
