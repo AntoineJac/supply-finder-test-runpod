@@ -205,7 +205,7 @@ async def rerank(req: RerankRequest):
         raise HTTPException(status_code=400, detail="documents must not be empty")
 
     try:
-        scores, usage = await embedding_service.rerank(model_id, req.query, req.documents)
+        scores, usage = await embedding_service.rerank(model_id, req.query, req.documents, raw_scores=req.raw_scores)
     except (IndexError, KeyError):
         raise _model_not_found(model_id)
     except Exception as exc:

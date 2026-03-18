@@ -114,10 +114,10 @@ class EmbeddingService:
             await self.start()
         return await self.engine_array[model].embed(texts)
 
-    async def rerank(self, model: str, query: str, docs: list[str]):
-        """Returns (scores: list[float], usage: int)."""
+    async def rerank(self, model: str, query: str, docs: list[str], raw_scores: bool = True):
+        """Returns (scores: list[RerankReturnType], usage: int)."""
         if not self.is_running:
             await self.start()
         return await self.engine_array[model].rerank(
-            query=query, docs=docs, raw_scores=False
+            query=query, docs=docs, raw_scores=raw_scores
         )

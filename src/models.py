@@ -34,6 +34,7 @@ class RerankRequest(BaseModel):
     documents: List[str] = Field(..., description="Documents to rank against the query")
     top_n: Optional[int] = Field(None, description="Return top N results (default: all)")
     return_documents: bool = Field(default=False, description="Include document text in results")
+    raw_scores: bool = Field(default=True, description="Return raw logit scores (can be negative/positive). Set false for sigmoid-normalised 0–1 scores")
 
 
 class RerankResponse(BaseModel):
