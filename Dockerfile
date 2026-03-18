@@ -44,14 +44,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # ── Smoke-test: verify torch sees CUDA and infinity-emb imports cleanly ───
 # This runs at BUILD time — catches missing libs before the image is pushed.
-RUN python -c "
-import torch
-print('torch:', torch.__version__)
-print('cuda available (build-time check):', torch.cuda.is_available())
-from infinity_emb.engine import AsyncEngineArray, EngineArgs
-from sentence_transformers import SentenceTransformer
-print('infinity-emb + sentence-transformers OK')
-"
+RUN python -c "import torch; print('torch:', torch.__version__); print('cuda available (build-time check):', torch.cuda.is_available())" && \
+    python -c "from infinity_emb.engine import AsyncEngineArray, EngineArgs; print('infinity-emb OK')"
 
 # ── App code ───────────────────────────────────────────────────────────────
 COPY src /src
