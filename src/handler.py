@@ -47,8 +47,8 @@ logger = logging.getLogger("nlp-worker")
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-EMBED_MODEL_NAME  = os.getenv("EMBED_MODEL_NAME",  "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
-RERANK_MODEL_NAME = os.getenv("RERANK_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L4-v2")
+EMBED_MODEL_NAME  = os.getenv("EMBED_MODEL_NAME",  "/app/.cache/sentence_transformers/paraphrase-multilingual-mpnet-base-v2")
+RERANK_MODEL_NAME = os.getenv("RERANK_MODEL_NAME", "/app/.cache/sentence_transformers/ms-marco-MiniLM-L4-v2")
 PORT              = int(os.getenv("PORT", 80))
 DEVICE            = "cuda" if torch.cuda.is_available() else "cpu"
 

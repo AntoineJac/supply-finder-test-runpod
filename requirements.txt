@@ -3,12 +3,5 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 pydantic>=2.0.0
 
-# Aux inference
-sentence-transformers>=3.3.0
-numpy>=1.26.0
-# torch CPU-only is installed separately in the Dockerfile via the PyTorch index
-
 # HuggingFace
 huggingface-hub>=0.24.0
-hf-transfer>=0.1.6
-packaging
