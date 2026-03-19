@@ -1,15 +1,7 @@
 --extra-index-url https://download.pytorch.org/whl/cu124
 
-# --- 1. PyTorch (CUDA 12.4) ---
+# PyTorch (CUDA 12.4)
 torch==2.6.0+cu124
 
-# --- 2. numpy compatible with torch 2.6 ---
-numpy>=1.20.0,<2.0.0
-
-# --- 3. infinity-emb with torch extra ---
-#   [torch] → sentence-transformers, tokenizers, transformers
-#   NOTE: do NOT install the [optimum] or [all] extras — those pull in
-#   `optimum`, whose bettertransformer module was removed in optimum>=1.23.
-#   We pass bettertransformer=False in EngineArgs so that code path is
-#   never exercised.
-infinity-emb[torch]==0.0.77
+# sentence-transformers (includes transformers, tokenizers, numpy)
+sentence-transformers>=3.0.0,<4.0.0

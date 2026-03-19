@@ -1,6 +1,6 @@
 """
 RunPod Load Balancing Worker — Embeddings + Reranker
-Follows: https://docs.runpod.io/serverless/load-balancing/build-a-worker
+Uses sentence-transformers with CUDA for GPU-accelerated inference.
 
 Endpoints
 ---------
@@ -14,23 +14,18 @@ GET  /stats         → Live server stats
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-import sys
 import time
 from contextlib import asynccontextmanager
+from typing import Any, Dict, List, Optional, Union
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, status
 from fastapi.responses import JSONResponse
-
-from embedding_service import EmbeddingService
-from models import (
-    EmbeddingRequest,
-    EmbeddingResponse,
-    RerankRequest,
-    RerankResponse,
-)
+from pydantic import BaseModel, Field
+from sentence_transformers import CrossEncoder, SentenceTransformer
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -48,24 +43,43 @@ EMBED_MODEL  = os.getenv("EMBED_MODEL_NAME",  "sentence-transformers/paraphrase-
 RERANK_MODEL = os.getenv("RERANK_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L4-v2")
 PORT         = int(os.getenv("PORT", 80))
 
-if not os.environ.get("MODEL_NAMES"):
-    os.environ["MODEL_NAMES"] = f"{EMBED_MODEL};{RERANK_MODEL}"
+# ---------------------------------------------------------------------------
+# Models & state
+# ---------------------------------------------------------------------------
+embed_model:  SentenceTransformer | None = None
+rerank_model: CrossEncoder | None        = None
+models_ready  = False
+start_time    = time.time()
+request_stats = {"embeddings": 0, "rerank": 0, "errors": 0}
+
 
 # ---------------------------------------------------------------------------
-# Service singleton — fail fast on bad config
+# Schemas
 # ---------------------------------------------------------------------------
-try:
-    embedding_service = EmbeddingService()
-except Exception as exc:
-    sys.stderr.write(f"\nStartup failed: {exc}\n")
-    sys.exit(1)
+class EmbeddingRequest(BaseModel):
+    model: Optional[str] = None
+    input: Union[str, List[str]]
 
-# ---------------------------------------------------------------------------
-# Global state
-# ---------------------------------------------------------------------------
-models_ready:  bool  = False
-start_time:    float = time.time()
-request_stats: dict  = {"embeddings": 0, "rerank": 0, "errors": 0}
+
+class EmbeddingResponse(BaseModel):
+    object: str = "list"
+    model: str
+    data: List[Dict[str, Any]]
+    usage: Dict[str, int]
+
+
+class RerankRequest(BaseModel):
+    query: str
+    documents: List[str]
+    top_n: Optional[int] = None
+    return_documents: bool = False
+    raw_scores: bool = Field(default=True, description="Return raw logit scores. Set false for sigmoid-normalised 0–1 scores")
+
+
+class RerankResponse(BaseModel):
+    model: str
+    results: List[Dict[str, Any]]
+    usage: Dict[str, int]
 
 
 # ---------------------------------------------------------------------------
@@ -73,47 +87,32 @@ request_stats: dict  = {"embeddings": 0, "rerank": 0, "errors": 0}
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    global models_ready
-    await embedding_service.start()
+    global embed_model, rerank_model, models_ready
+    logger.info(f"Loading embed model: {EMBED_MODEL}")
+    embed_model  = SentenceTransformer(EMBED_MODEL)
+    logger.info(f"Loading rerank model: {RERANK_MODEL}")
+    rerank_model = CrossEncoder(RERANK_MODEL)
     models_ready = True
+    logger.info("✓ All models loaded.")
     yield
     models_ready = False
-    await embedding_service.stop()
     logger.info("Shutting down.")
 
 
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
-app = FastAPI(
-    title="NLP Inference Worker",
-    version="1.0.0",
-    description="RunPod Load Balancer worker — embeddings + reranker",
-    lifespan=lifespan,
-)
+app = FastAPI(title="NLP Inference Worker", version="1.0.0", lifespan=lifespan)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-def _check_models():
+def _check_ready():
     if not models_ready:
         request_stats["errors"] += 1
         raise HTTPException(status_code=503, detail="Models not ready — check /ping")
 
 
-def _model_not_found(model_id: str) -> HTTPException:
-    """infinity-emb raises IndexError (not KeyError) for unknown model names."""
-    available = embedding_service.list_models()
-    return HTTPException(
-        status_code=400,
-        detail=f"Model '{model_id}' not loaded. Available: {available}",
-    )
-
-
 # ---------------------------------------------------------------------------
-# /ping — REQUIRED by RunPod load balancer
-# 200 = healthy  |  503 = still initialising
+# Routes
 # ---------------------------------------------------------------------------
 @app.get("/ping")
 async def health_check():
@@ -129,15 +128,8 @@ async def health_check():
 async def root():
     return {
         "service": "NLP Inference Worker",
-        "ready": models_ready,
-        "models": embedding_service.list_models() if models_ready else [],
-        "endpoints": {
-            "health":     "GET  /ping",
-            "models":     "GET  /v1/models",
-            "embeddings": "POST /v1/embeddings",
-            "rerank":     "POST /v1/rerank",
-            "stats":      "GET  /stats",
-        },
+        "ready":   models_ready,
+        "models":  [EMBED_MODEL, RERANK_MODEL] if models_ready else [],
     }
 
 
@@ -147,8 +139,8 @@ async def list_models():
     return {
         "object": "list",
         "data": [
-            {"id": m, "object": "model", "created": now, "owned_by": "infinity-emb"}
-            for m in embedding_service.list_models()
+            {"id": m, "object": "model", "created": now, "owned_by": "sentence-transformers"}
+            for m in [EMBED_MODEL, RERANK_MODEL]
         ],
     }
 
@@ -158,75 +150,58 @@ async def stats():
     return {
         "uptime_seconds": int(time.time() - start_time),
         "models_ready":   models_ready,
-        "models":         embedding_service.list_models() if models_ready else [],
         "request_counts": request_stats,
     }
 
 
-# ---------------------------------------------------------------------------
-# POST /v1/embeddings
-# ---------------------------------------------------------------------------
 @app.post("/v1/embeddings", response_model=EmbeddingResponse)
 async def embeddings(req: EmbeddingRequest):
-    _check_models()
+    _check_ready()
     request_stats["embeddings"] += 1
-
-    texts    = [req.input] if isinstance(req.input, str) else req.input
-    model_id = req.model or EMBED_MODEL
+    texts = [req.input] if isinstance(req.input, str) else req.input
     if not texts:
         raise HTTPException(status_code=400, detail="input must not be empty")
-
     try:
-        vecs, usage = await embedding_service.embed(model_id, texts)
-    except (IndexError, KeyError):
-        raise _model_not_found(model_id)
+        loop = asyncio.get_running_loop()
+        vecs = await loop.run_in_executor(None, embed_model.encode, texts)
     except Exception as exc:
         request_stats["errors"] += 1
         logger.exception("embed failed")
         raise HTTPException(status_code=500, detail=str(exc))
-
     return EmbeddingResponse(
-        model=model_id,
+        model=EMBED_MODEL,
         data=[{"object": "embedding", "index": i, "embedding": v.tolist()} for i, v in enumerate(vecs)],
-        usage={"prompt_tokens": usage, "total_tokens": usage},
+        usage={"prompt_tokens": len(texts), "total_tokens": len(texts)},
     )
 
 
-# ---------------------------------------------------------------------------
-# POST /v1/rerank
-# ---------------------------------------------------------------------------
 @app.post("/v1/rerank", response_model=RerankResponse)
 async def rerank(req: RerankRequest):
-    _check_models()
+    _check_ready()
     request_stats["rerank"] += 1
-
-    model_id = req.model or RERANK_MODEL
     if not req.documents:
         raise HTTPException(status_code=400, detail="documents must not be empty")
-
     try:
-        scores, usage = await embedding_service.rerank(model_id, req.query, req.documents, raw_scores=req.raw_scores)
-    except (IndexError, KeyError):
-        raise _model_not_found(model_id)
+        pairs  = [[req.query, doc] for doc in req.documents]
+        loop   = asyncio.get_running_loop()
+        scores = await loop.run_in_executor(None, rerank_model.predict, pairs)
     except Exception as exc:
         request_stats["errors"] += 1
         logger.exception("rerank failed")
         raise HTTPException(status_code=500, detail=str(exc))
-
-    # scores is list[RerankReturnType] — each has .relevance_score, .document, .index
-    ranked = sorted(scores, key=lambda s: s.relevance_score, reverse=True)
-    top_n  = req.top_n or len(ranked)
+    indexed = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
+    top_n   = req.top_n or len(indexed)
     return RerankResponse(
-        model=model_id,
+        model=RERANK_MODEL,
         results=[
             {
-                "index":    s.index,
-                "score":    float(s.relevance_score),
-                "document": s.document if req.return_documents else None,
+                "index":    i,
+                "score":    float(s),
+                "document": req.documents[i] if req.return_documents else None,
             }
-            for s in ranked[:top_n]
+            for i, s in indexed[:top_n]
         ],
-        usage={"prompt_tokens": usage, "total_tokens": usage},
+        usage={"prompt_tokens": len(req.documents), "total_tokens": len(req.documents)},
     )
 
 
