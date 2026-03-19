@@ -21,10 +21,6 @@ RUN pip install --no-cache-dir -r /requirements.txt
 
 RUN python -c "from sentence_transformers import SentenceTransformer; print('sentence-transformers OK')"
 
-# Bake models into the image
-RUN python -c "from huggingface_hub import snapshot_download; snapshot_download('${EMBED_MODEL}'); print('embed model ready')"
-RUN python -c "from huggingface_hub import snapshot_download; snapshot_download('${RERANK_MODEL}'); print('rerank model ready')"
-
 COPY src /src
 ENV PYTHONPATH="/src"
 WORKDIR /src
