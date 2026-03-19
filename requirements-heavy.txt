@@ -1,7 +1,0 @@
---extra-index-url https://download.pytorch.org/whl/cu124
-
-# PyTorch (CUDA 12.4)
-torch==2.6.0+cu124
-
-# sentence-transformers (includes transformers, tokenizers, numpy)
-sentence-transformers>=3.0.0,<4.0.0
