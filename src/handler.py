@@ -1,5 +1,5 @@
 """
-RunPod Load Balancing Worker — Embeddings + Reranker
+RunPod Load Balancing Worker — Embeddings
 Uses sentence-transformers with CUDA for GPU-accelerated inference.
 
 Endpoints
@@ -8,7 +8,6 @@ GET  /ping          → Health check (required by RunPod LB)
 GET  /              → API info + readiness
 GET  /v1/models     → List loaded models
 POST /v1/embeddings → Sentence embeddings (OpenAI-compat)
-POST /v1/rerank     → Cross-encoder rerank scores
 GET  /stats         → Live server stats
 """
 
@@ -24,8 +23,8 @@ from typing import Any, Dict, List, Optional, Union
 import uvicorn
 from fastapi import FastAPI, HTTPException, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
-from sentence_transformers import CrossEncoder, SentenceTransformer
+from pydantic import BaseModel
+from sentence_transformers import SentenceTransformer
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -39,18 +38,16 @@ logger = logging.getLogger("nlp-worker")
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-EMBED_MODEL  = os.getenv("EMBED_MODEL_NAME",  "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
-RERANK_MODEL = os.getenv("RERANK_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L4-v2")
-PORT         = int(os.getenv("PORT", 80))
+EMBED_MODEL = os.getenv("EMBED_MODEL_NAME", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
+PORT        = int(os.getenv("PORT", 80))
 
 # ---------------------------------------------------------------------------
 # Models & state
 # ---------------------------------------------------------------------------
 embed_model:  SentenceTransformer | None = None
-rerank_model: CrossEncoder | None        = None
 models_ready  = False
 start_time    = time.time()
-request_stats = {"embeddings": 0, "rerank": 0, "errors": 0}
+request_stats = {"embeddings": 0, "errors": 0}
 
 
 # ---------------------------------------------------------------------------
@@ -68,32 +65,16 @@ class EmbeddingResponse(BaseModel):
     usage: Dict[str, int]
 
 
-class RerankRequest(BaseModel):
-    query: str
-    documents: List[str]
-    top_n: Optional[int] = None
-    return_documents: bool = False
-    raw_scores: bool = Field(default=True, description="Return raw logit scores. Set false for sigmoid-normalised 0–1 scores")
-
-
-class RerankResponse(BaseModel):
-    model: str
-    results: List[Dict[str, Any]]
-    usage: Dict[str, int]
-
-
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    global embed_model, rerank_model, models_ready
+    global embed_model, models_ready
     logger.info(f"Loading embed model: {EMBED_MODEL}")
     embed_model  = SentenceTransformer(EMBED_MODEL)
-    logger.info(f"Loading rerank model: {RERANK_MODEL}")
-    rerank_model = CrossEncoder(RERANK_MODEL)
     models_ready = True
-    logger.info("✓ All models loaded.")
+    logger.info("✓ Model loaded.")
     yield
     models_ready = False
     logger.info("Shutting down.")
@@ -129,7 +110,7 @@ async def root():
     return {
         "service": "NLP Inference Worker",
         "ready":   models_ready,
-        "models":  [EMBED_MODEL, RERANK_MODEL] if models_ready else [],
+        "models":  [EMBED_MODEL] if models_ready else [],
     }
 
 
@@ -139,8 +120,7 @@ async def list_models():
     return {
         "object": "list",
         "data": [
-            {"id": m, "object": "model", "created": now, "owned_by": "sentence-transformers"}
-            for m in [EMBED_MODEL, RERANK_MODEL]
+            {"id": EMBED_MODEL, "object": "model", "created": now, "owned_by": "sentence-transformers"}
         ],
     }
 
@@ -172,36 +152,6 @@ async def embeddings(req: EmbeddingRequest):
         model=EMBED_MODEL,
         data=[{"object": "embedding", "index": i, "embedding": v.tolist()} for i, v in enumerate(vecs)],
         usage={"prompt_tokens": len(texts), "total_tokens": len(texts)},
-    )
-
-
-@app.post("/v1/rerank", response_model=RerankResponse)
-async def rerank(req: RerankRequest):
-    _check_ready()
-    request_stats["rerank"] += 1
-    if not req.documents:
-        raise HTTPException(status_code=400, detail="documents must not be empty")
-    try:
-        pairs  = [[req.query, doc] for doc in req.documents]
-        loop   = asyncio.get_running_loop()
-        scores = await loop.run_in_executor(None, rerank_model.predict, pairs)
-    except Exception as exc:
-        request_stats["errors"] += 1
-        logger.exception("rerank failed")
-        raise HTTPException(status_code=500, detail=str(exc))
-    indexed = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
-    top_n   = req.top_n or len(indexed)
-    return RerankResponse(
-        model=RERANK_MODEL,
-        results=[
-            {
-                "index":    i,
-                "score":    float(s),
-                "document": req.documents[i] if req.return_documents else None,
-            }
-            for i, s in indexed[:top_n]
-        ],
-        usage={"prompt_tokens": len(req.documents), "total_tokens": len(req.documents)},
     )
 
 
